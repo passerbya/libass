@@ -32,7 +32,7 @@
 #elif defined(CREATE_HASH_FUNCTIONS)
 #undef CREATE_HASH_FUNCTIONS
 #define START(funcname, structname) \
-    static uint32_t funcname##_hash(void *buf, uint32_t hval) \
+    static ass_hashcode funcname##_hash(void *buf, ass_hashcode hval) \
     { \
         struct structname *p = buf;
 #define GENERIC(type, member) \
