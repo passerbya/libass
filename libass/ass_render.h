@@ -289,6 +289,8 @@ typedef struct {
 
 #include "ass_shaper.h"
 
+typedef void(*fnAssPrivDataChange)(void* observer, void* data);
+
 struct ass_renderer {
     ASS_Library *library;
     FT_Library ftlibrary;
@@ -325,6 +327,9 @@ struct ass_renderer {
     RasterizerData rasterizer;
 
     ASS_Style user_override_style;
+    
+    fnAssPrivDataChange pFnAssPrivDataChange;
+    void* assPrivDataObserver;
 };
 
 typedef struct render_priv {

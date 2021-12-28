@@ -2830,6 +2830,9 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
 
     if (render_priv->state.border_style == 4)
         add_background(render_priv, event_images);
+        
+    if (render_priv->pFnAssPrivDataChange)
+        render_priv->pFnAssPrivDataChange(render_priv->assPrivDataObserver, render_priv);
 
     ass_shaper_cleanup(render_priv->shaper, text_info);
     free_render_context(render_priv);
