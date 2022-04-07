@@ -45,14 +45,14 @@ static const char *const ass_style_format =
         "Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, "
         "ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, "
-        "Alignment, MarginL, MarginR, MarginV, Encoding";
+        "Alignment, MarginL, MarginR, MarginV, Encoding, LineSpacing";
 static const char *const ass_event_format =
         "Layer, Start, End, Style, Name, "
         "MarginL, MarginR, MarginV, Effect, Text";
 static const char *const ssa_style_format =
         "Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, "
         "TertiaryColour, BackColour, Bold, Italic, BorderStyle, Outline, "
-        "Shadow, Alignment, MarginL, MarginR, MarginV, AlphaLevel, Encoding";
+        "Shadow, Alignment, MarginL, MarginR, MarginV, AlphaLevel, Encoding, LineSpacing";
 static const char *const ssa_event_format =
         "Marked, Start, End, Style, Name, "
         "MarginL, MarginR, MarginV, Effect, Text";
@@ -224,6 +224,7 @@ static void set_default_style(ASS_Style *style)
     style->Shadow           = 3;
     style->Alignment        = 2;
     style->MarginL = style->MarginR = style->MarginV = 20;
+    style->LineSpacing      = 0;
 }
 
 static long long string2timecode(ASS_Library *library, char *p)
@@ -455,6 +456,7 @@ void ass_process_force_style(ASS_Track *track)
                     FPVAL(Outline)
                     FPVAL(Shadow)
                     FPVAL(Blur)
+                    FPVAL(LineSpacing)
                 PARSE_END
             }
         }
@@ -551,6 +553,7 @@ static int process_style(ASS_Track *track, char *str)
             FPVAL(ScaleY)
             FPVAL(Outline)
             FPVAL(Shadow)
+            FPVAL(LineSpacing)
         PARSE_END
     }
     free(format);
