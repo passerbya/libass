@@ -2673,7 +2673,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
         x2scr_right(render_priv, render_priv->track->PlayResX - MarginR) -
         x2scr_left(render_priv, MarginL);
 
-    ass_set_line_spacing(render_priv, render_priv->state.style->LineSpacing);
+    ass_set_line_spacing(render_priv, render_priv->state.style->LineSpacing * render_priv->font_scale);
     // wrap lines
     wrap_lines_smart(render_priv, max_text_width);
 
