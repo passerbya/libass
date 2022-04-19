@@ -165,6 +165,7 @@ typedef struct glyph_info {
     double border_x, border_y;
     double hspacing;
     int hspacing_scaled;        // 26.6
+    double lineSpacing;
     unsigned italic;
     unsigned bold;
     int flags;
@@ -219,6 +220,7 @@ typedef struct {
     double org_x, org_y;        // origin
     double scale_x, scale_y;
     double hspacing;            // distance between letters, in pixels
+    double lineSpacing;
     double border_x;            // outline width
     double border_y;
     enum {

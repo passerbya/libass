@@ -877,8 +877,14 @@ static ASS_Style *handle_selective_style_overrides(ASS_Renderer *render_priv,
     user->Name = "OverrideStyle"; // name insignificant
 
     // Either the event's style, or the style forced with a \r tag.
-    if (!rstyle)
+    if (!rstyle) {
         rstyle = script;
+    }
+    else {
+        if (rstyle->LineSpacing == 0) {
+            rstyle->LineSpacing = script->LineSpacing;
+        }
+    }
 
     // Create a new style that contains a mix of the original style and
     // user_style (the user's override style). Copy only fields from the
@@ -1019,6 +1025,7 @@ void reset_render_context(ASS_Renderer *render_priv, ASS_Style *style)
     render_priv->state.scale_x = style->ScaleX;
     render_priv->state.scale_y = style->ScaleY;
     render_priv->state.hspacing = style->Spacing;
+    render_priv->state.lineSpacing = style->LineSpacing;
     render_priv->state.be = 0;
     render_priv->state.blur = style->Blur;
     render_priv->state.shadow_x = style->Shadow;
@@ -1523,19 +1530,23 @@ static void measure_text(ASS_Renderer *render_priv)
     int cur_line = 0;
     double scale = 0.5 / 64;
     int max_asc = 0, max_desc = 0;
+    double max_line_spacing = 0, total_line_spacing = 0;
     double max_border_y = 0, max_border_x = 0;
     bool empty_trimmed_line = true;
     for (int i = 0; i < text_info->length; i++) {
+        GlyphInfo* cur = text_info->glyphs + i;
+        max_line_spacing = FFMAX(max_line_spacing, cur->lineSpacing * render_priv->font_scale);
         if (text_info->glyphs[i].linebreak) {
+            total_line_spacing += max_line_spacing;
             measure_text_on_eol(render_priv, scale, cur_line,
                     max_asc, max_desc, max_border_x, max_border_y);
             empty_trimmed_line = true;
             max_asc = max_desc = 0;
+            max_line_spacing = 0;
             max_border_y = max_border_x = 0;
             scale = 0.5 / 64;
             cur_line++;
         }
-        GlyphInfo *cur = text_info->glyphs + i;
         // VSFilter ignores metrics of line-leading/trailing (trimmed)
         // whitespace, except when the line becomes empty after trimming
         if (empty_trimmed_line && !cur->is_trimmed_whitespace) {
@@ -1557,7 +1568,7 @@ static void measure_text(ASS_Renderer *render_priv)
     assert(cur_line == text_info->n_lines - 1);
     measure_text_on_eol(render_priv, scale, cur_line,
             max_asc, max_desc, max_border_x, max_border_y);
-    text_info->height += cur_line * render_priv->settings.line_spacing;
+    text_info->height += cur_line * render_priv->settings.line_spacing + total_line_spacing;
 }
 
 /**
@@ -1764,9 +1775,11 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
         cur = text_info->glyphs + ++i;
     pen_shift_x = d6_to_double(-cur->pos.x);
     pen_shift_y = 0.;
+    double max_line_spacing = 0;
 
     for (i = 0; i < text_info->length; ++i) {
         cur = text_info->glyphs + i;
+        max_line_spacing = FFMAX(max_line_spacing, cur->lineSpacing * render_priv->font_scale);
         if (cur->linebreak) {
             while (i < text_info->length && cur->skip && cur->symbol != '\n')
                 cur = text_info->glyphs + ++i;
@@ -1778,7 +1791,8 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
             text_info->lines[cur_line].offset = i;
             cur_line++;
             pen_shift_x = d6_to_double(-cur->pos.x);
-            pen_shift_y += height + render_priv->settings.line_spacing;
+            pen_shift_y += height + render_priv->settings.line_spacing + max_line_spacing;
+            max_line_spacing = 0;
         }
         cur->pos.x += double_to_d6(pen_shift_x);
         cur->pos.y += double_to_d6(pen_shift_y);
@@ -1896,6 +1910,7 @@ static void split_style_runs(ASS_Renderer *render_priv)
             last->border_x != info->border_x ||
             last->border_y != info->border_y ||
             last->hspacing != info->hspacing ||
+            last->lineSpacing != info->lineSpacing ||
             last->italic != info->italic ||
             last->bold != info->bold ||
             ((last->flags ^ info->flags) & ~DECO_ROTATE);
@@ -2000,6 +2015,7 @@ static bool parse_events(ASS_Renderer *render_priv, ASS_Event *event)
         info->border_x = render_priv->state.border_x;
         info->border_y = render_priv->state.border_y;
         info->hspacing = render_priv->state.hspacing;
+        info->lineSpacing = render_priv->state.lineSpacing;
         info->bold = render_priv->state.bold;
         info->italic = render_priv->state.italic;
         info->flags = render_priv->state.flags;
@@ -2102,14 +2118,17 @@ static void reorder_text(ASS_Renderer *render_priv)
     // Reposition according to the map
     ASS_Vector pen = { 0, 0 };
     int lineno = 1;
+    double max_line_spacing = 0;
     for (int i = 0; i < text_info->length; i++) {
         GlyphInfo *info = text_info->glyphs + cmap[i];
+        max_line_spacing = FFMAX(max_line_spacing, info->lineSpacing * render_priv->font_scale);
         if (text_info->glyphs[i].linebreak) {
             pen.x = 0;
             pen.y += double_to_d6(text_info->lines[lineno-1].desc);
             pen.y += double_to_d6(text_info->lines[lineno].asc);
-            pen.y += double_to_d6(render_priv->settings.line_spacing);
+            pen.y += double_to_d6(render_priv->settings.line_spacing + max_line_spacing);
             lineno++;
+            max_line_spacing = 0;
         }
         if (info->skip)
             continue;
@@ -2673,7 +2692,6 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
         x2scr_right(render_priv, render_priv->track->PlayResX - MarginR) -
         x2scr_left(render_priv, MarginL);
 
-    ass_set_line_spacing(render_priv, render_priv->state.style->LineSpacing * render_priv->font_scale);
     // wrap lines
     wrap_lines_smart(render_priv, max_text_width);
 
