@@ -23,6 +23,7 @@
 #include <math.h>
 #include <string.h>
 #include <stdbool.h>
+#include <float.h>
 
 #include "ass.h"
 #include "ass_outline.h"
@@ -1530,19 +1531,20 @@ static void measure_text(ASS_Renderer *render_priv)
     int cur_line = 0;
     double scale = 0.5 / 64;
     int max_asc = 0, max_desc = 0;
-    double max_line_spacing = 0, total_line_spacing = 0;
+    double max_line_spacing = -DBL_MAX, total_line_spacing = 0;
     double max_border_y = 0, max_border_x = 0;
     bool empty_trimmed_line = true;
     for (int i = 0; i < text_info->length; i++) {
         GlyphInfo* cur = text_info->glyphs + i;
-        max_line_spacing = FFMAX(max_line_spacing, cur->lineSpacing * render_priv->font_scale);
+        double d = cur->lineSpacing * render_priv->font_scale;
+        max_line_spacing = FFMAX(max_line_spacing, d);
         if (text_info->glyphs[i].linebreak) {
             total_line_spacing += max_line_spacing;
             measure_text_on_eol(render_priv, scale, cur_line,
                     max_asc, max_desc, max_border_x, max_border_y);
             empty_trimmed_line = true;
             max_asc = max_desc = 0;
-            max_line_spacing = 0;
+            max_line_spacing = -DBL_MAX;
             max_border_y = max_border_x = 0;
             scale = 0.5 / 64;
             cur_line++;
@@ -1775,11 +1777,12 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
         cur = text_info->glyphs + ++i;
     pen_shift_x = d6_to_double(-cur->pos.x);
     pen_shift_y = 0.;
-    double max_line_spacing = 0;
+    double max_line_spacing = -DBL_MAX;
 
     for (i = 0; i < text_info->length; ++i) {
         cur = text_info->glyphs + i;
-        max_line_spacing = FFMAX(max_line_spacing, cur->lineSpacing * render_priv->font_scale);
+        double d = cur->lineSpacing * render_priv->font_scale;
+        max_line_spacing = FFMAX(max_line_spacing, d);
         if (cur->linebreak) {
             while (i < text_info->length && cur->skip && cur->symbol != '\n')
                 cur = text_info->glyphs + ++i;
@@ -1792,7 +1795,7 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
             cur_line++;
             pen_shift_x = d6_to_double(-cur->pos.x);
             pen_shift_y += height + render_priv->settings.line_spacing + max_line_spacing;
-            max_line_spacing = 0;
+            max_line_spacing = -DBL_MAX;
         }
         cur->pos.x += double_to_d6(pen_shift_x);
         cur->pos.y += double_to_d6(pen_shift_y);
@@ -2118,17 +2121,18 @@ static void reorder_text(ASS_Renderer *render_priv)
     // Reposition according to the map
     ASS_Vector pen = { 0, 0 };
     int lineno = 1;
-    double max_line_spacing = 0;
+    double max_line_spacing = -DBL_MAX;
     for (int i = 0; i < text_info->length; i++) {
         GlyphInfo *info = text_info->glyphs + cmap[i];
-        max_line_spacing = FFMAX(max_line_spacing, info->lineSpacing * render_priv->font_scale);
+        double d = info->lineSpacing * render_priv->font_scale;
+        max_line_spacing = FFMAX(max_line_spacing, d);
         if (text_info->glyphs[i].linebreak) {
             pen.x = 0;
             pen.y += double_to_d6(text_info->lines[lineno-1].desc);
             pen.y += double_to_d6(text_info->lines[lineno].asc);
             pen.y += double_to_d6(render_priv->settings.line_spacing + max_line_spacing);
             lineno++;
-            max_line_spacing = 0;
+            max_line_spacing = -DBL_MAX;
         }
         if (info->skip)
             continue;
