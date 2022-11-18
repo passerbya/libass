@@ -2849,7 +2849,7 @@ ass_render_event(ASS_Renderer *render_priv, ASS_Event *event,
     event_images->event = event;
     event_images->imgs = render_text(render_priv);
 
-    if (render_priv->state.border_style == 4)
+    if (render_priv->state.border_style == 4 && !(text_info->length == 1 && text_info->glyphs->drawing_text.len > 1))
         add_background(render_priv, event_images);
         
     if (render_priv->pFnAssPrivDataChange)
