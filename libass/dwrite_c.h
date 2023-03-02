@@ -183,7 +183,6 @@ DWRITEAPI HRESULT WINAPI DWriteCreateFactory(
   IUnknown **factory
 );
 
-
 #ifndef __MINGW_DEF_ARG_VAL
 #ifdef __cplusplus
 #define __MINGW_DEF_ARG_VAL(x) = x

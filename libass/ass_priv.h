@@ -41,8 +41,11 @@ typedef enum {
     SINFO_SCALEDBORDER = 1 << 5,
     SINFO_COLOURMATRIX = 1 << 6,
     SINFO_KERNING      = 1 << 7,
+    SINFO_SCRIPTTYPE   = 1 << 8,
+    SINFO_LAYOUTRESX   = 1 << 9,
+    SINFO_LAYOUTRESY   = 1 << 10,
     // for legacy detection
-    GENBY_FFMPEG       = 1 << 8
+    GENBY_FFMPEG       = 1 << 14
     // max 32 enumerators
 } ScriptInfo;
 
@@ -61,9 +64,7 @@ struct parser_priv {
     // tracks [Script Info] headers set by the script
     uint32_t header_flags;
 
-#ifdef USE_FRIBIDI_EX_API
-    bool bidi_brackets;
-#endif
+    uint32_t feature_flags;
 };
 
 #endif /* LIBASS_PRIV_H */

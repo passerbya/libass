@@ -27,6 +27,7 @@
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #include <math.h>
 
 #include "ass.h"
@@ -48,10 +49,10 @@
 
 #define ASS_PI 3.14159265358979323846
 
-#if (defined(__i386__) || defined(__x86_64__) || defined(_M_IX86) || defined(_M_X64)) && CONFIG_ASM
-int has_sse2(void);
-int has_avx(void);
-int has_avx2(void);
+#define FEATURE_MASK(feat) (((uint32_t) 1) << (feat))
+
+#if CONFIG_ASM && ARCH_X86
+void ass_cpu_capabilities(bool *sse2, bool *avx2);
 #endif
 
 typedef struct {
@@ -93,14 +94,6 @@ void *ass_try_realloc_array(void *ptr, size_t nmemb, size_t size);
 #define ASS_REALLOC_ARRAY(ptr, count) \
     (errno = 0, (ptr) = ass_try_realloc_array(ptr, count, sizeof(*ptr)), !errno)
 
-void skip_spaces(char **str);
-void rskip_spaces(char **str, char *limit);
-int32_t parse_alpha_tag(char *str);
-uint32_t parse_color_tag(char *str);
-uint32_t parse_color_header(char *str);
-char parse_bool(char *str);
-int parse_ycbcr_matrix(char *str);
-int numpad2align(int val);
 unsigned ass_utf8_get_char(char **str);
 unsigned ass_utf8_put_char(char *dest, uint32_t ch);
 void ass_utf16be_to_utf8(char *dst, size_t dst_size, uint8_t *src, size_t src_size);
@@ -110,11 +103,48 @@ void ass_utf16be_to_utf8(char *dst, size_t dst_size, uint8_t *src, size_t src_si
     __attribute__ ((format (printf, 3, 4)))
 #endif
 void ass_msg(ASS_Library *priv, int lvl, const char *fmt, ...);
-int lookup_style(ASS_Track *track, char *name);
-ASS_Style *lookup_style_strict(ASS_Track *track, char *name, size_t len);
+int ass_lookup_style(ASS_Track *track, char *name);
 
 /* defined in ass_strtod.c */
 double ass_strtod(const char *string, char **endPtr);
+
+static inline void skip_spaces(char **str)
+{
+    char *p = *str;
+    while ((*p == ' ') || (*p == '\t'))
+        ++p;
+    *str = p;
+}
+
+static inline void rskip_spaces(char **str, char *limit)
+{
+    char *p = *str;
+    while ((p > limit) && ((p[-1] == ' ') || (p[-1] == '\t')))
+        --p;
+    *str = p;
+}
+
+/**
+ * \brief converts numpad-style align to align.
+ */
+static inline int numpad2align(int val)
+{
+    if (val < -INT_MAX)
+        // Pick an alignment somewhat arbitrarily. VSFilter handles
+        // INT32_MIN as a mix of 1, 2 and 3, so prefer one of those values.
+        val = 2;
+    else if (val < 0)
+        val = -val;
+
+    int res = ((val - 1) % 3) + 1;  // horizontal alignment
+    if (val <= 3)
+        res |= VALIGN_SUB;
+    else if (val <= 6)
+        res |= VALIGN_CENTER;
+    else
+        res |= VALIGN_TOP;
+    return res;
+}
 
 static inline size_t ass_align(size_t alignment, size_t s)
 {
@@ -182,42 +212,10 @@ static inline int double_to_d22(double x)
     return lrint(x * 0x400000);
 }
 
-#define FNV1_32A_INIT 0x811c9dc5U
-#define FNV1_32A_PRIME 16777619U
-
-static inline uint32_t fnv_32a_buf(const void *buf, size_t len, uint32_t hval)
+static inline int32_t lshiftwrapi(int32_t i, int32_t shift)
 {
-    if (!len)
-        return hval;
-
-    const uint8_t *bp = buf;
-    size_t n = (len + 3) / 4;
-
-    switch (len % 4) {
-    case 0: do { hval ^= *bp++; hval *= FNV1_32A_PRIME; //-fallthrough
-    case 3:      hval ^= *bp++; hval *= FNV1_32A_PRIME; //-fallthrough
-    case 2:      hval ^= *bp++; hval *= FNV1_32A_PRIME; //-fallthrough
-    case 1:      hval ^= *bp++; hval *= FNV1_32A_PRIME;
-               } while (--n > 0);
-    }
-
-    return hval;
-}
-
-static inline int mystrtoi(char **p, int *res)
-{
-    char *start = *p;
-    double temp_res = ass_strtod(*p, p);
-    *res = (int) (temp_res + (temp_res > 0 ? 0.5 : -0.5));
-    return *p != start;
-}
-
-static inline int mystrtoll(char **p, long long *res)
-{
-    char *start = *p;
-    double temp_res = ass_strtod(*p, p);
-    *res = (long long) (temp_res + (temp_res > 0 ? 0.5 : -0.5));
-    return *p != start;
+    // '0u +' to avoid automatic integer promotion causing UB
+    return (0u + (uint32_t)i) << (shift & 31);
 }
 
 static inline int mystrtod(char **p, double *res)

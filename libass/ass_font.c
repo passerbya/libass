@@ -26,6 +26,7 @@
 #include FT_GLYPH_H
 #include FT_TRUETYPE_TABLES_H
 #include FT_OUTLINE_H
+#include FT_TRUETYPE_IDS_H
 #include <limits.h>
 
 #include "ass.h"
@@ -36,10 +37,161 @@
 #include "ass_shaper.h"
 
 /**
+ *  Get the mbcs codepoint from the output bytes of iconv/WideCharToMultiByte,
+ *  by treating the bytes as a prefix-zero-byte-omitted big-endian integer.
+ */
+static inline uint32_t pack_mbcs_bytes(const char *bytes, size_t length)
+{
+    uint32_t ret = 0;
+    for (size_t i = 0; i < length; ++i) {
+        ret <<= 8;
+        ret |= (uint8_t) bytes[i];
+    }
+    return ret;
+}
+
+/**
+ * Convert a UCS-4 code unit to a packed uint32_t in given multibyte encoding.
+ *
+ * We don't exclude Cygwin for Windows since we use WideCharToMultiByte only,
+ * this shall not violate any Cygwin restrictions on Windows APIs.
+ */
+#if defined(_WIN32)
+
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+
+static uint32_t convert_unicode_to_mb(FT_Encoding encoding, uint32_t codepoint)
+{
+    // map freetype encoding to windows codepage
+    UINT codepage;
+    switch (encoding) {
+    case FT_ENCODING_MS_SJIS:
+        codepage = 932;
+        break;
+    case FT_ENCODING_MS_GB2312:
+        codepage = 936;
+        break;
+    case FT_ENCODING_MS_BIG5:
+        codepage = 950;
+        break;
+    case FT_ENCODING_MS_WANSUNG:
+        codepage = 949;
+        break;
+    case FT_ENCODING_MS_JOHAB:
+        codepage = 1361;
+        break;
+    default:
+        return 0;
+    }
+
+    WCHAR input_buffer[2];
+    size_t inbuf_size;
+
+    // encode surrogate pair, assuming codepoint > 0 && codepoint <= 10FFFF
+    if (codepoint >= 0x10000) {
+        // surrogate pair required
+        inbuf_size = 2;
+        input_buffer[0] = 0xD7C0 + (codepoint >> 10);
+        input_buffer[1] = 0xDC00 + (codepoint & 0x3FF);
+    } else {
+        inbuf_size = 1;
+        input_buffer[0] = codepoint;
+    }
+
+    // do convert
+    char output_buffer[2];
+    BOOL conversion_fail;
+    int output_length = WideCharToMultiByte(codepage, WC_NO_BEST_FIT_CHARS, input_buffer, inbuf_size,
+                                          output_buffer, sizeof(output_buffer), NULL, &conversion_fail);
+    if (output_length == 0 || conversion_fail)
+        return 0;
+
+    return pack_mbcs_bytes(output_buffer, output_length);
+}
+#elif defined(CONFIG_ICONV)
+
+#include <iconv.h>
+
+static uint32_t convert_unicode_to_mb(FT_Encoding encoding, uint32_t codepoint)
+{
+    typedef struct { const char *names[5]; } EncodingList;
+
+    EncodingList encoding_list;
+
+    // map freetype encoding to iconv encoding
+    switch (encoding) {
+    case FT_ENCODING_MS_SJIS:
+        encoding_list = (EncodingList) {{"CP932", "SHIFT_JIS", NULL}};
+        break;
+    case FT_ENCODING_MS_GB2312:
+        encoding_list = (EncodingList) {{"CP936", "GBK", "GB18030", "GB2312", NULL}};
+        break;
+    case FT_ENCODING_MS_BIG5:
+        encoding_list = (EncodingList) {{"CP950", "BIG5", NULL}};
+        break;
+    case FT_ENCODING_MS_WANSUNG:
+        encoding_list = (EncodingList) {{"CP949", "EUC-KR", NULL}};
+        break;
+    case FT_ENCODING_MS_JOHAB:
+        encoding_list = (EncodingList) {{"CP1361", "JOHAB", NULL}};
+        break;
+    default:
+        return 0;
+    }
+
+    // open iconv context
+    const char **encoding_str = encoding_list.names;
+    iconv_t cd = (iconv_t) -1;
+    while (*encoding_str) {
+        cd = iconv_open(*encoding_str, "UTF-32LE");
+        if (cd != (iconv_t) -1) break;
+        ++encoding_str;
+    }
+    if (cd == (iconv_t) -1)
+        return 0;
+
+    char input_buffer[4];
+    char output_buffer[2]; // MS-flavour encodings only need 2 bytes
+    uint32_t result = codepoint;
+
+    // convert input codepoint to little endian uint32_t bytearray,
+    // result becomes 0 after the loop finishes
+    for (int i = 0; i < 4; ++i) {
+        input_buffer[i] = result & 0xFF;
+        result >>= 8;
+    }
+
+    // do actual convert, only reversible converts are valid, since we are converting unicode to something else
+    size_t inbuf_size = sizeof(input_buffer);
+    size_t outbuf_size = sizeof(output_buffer);
+    char *inbuf = input_buffer;
+    char *outbuf = output_buffer;
+    if (iconv(cd, &inbuf, &inbuf_size, &outbuf, &outbuf_size))
+        goto clean;
+
+    // now we have multibyte string in output_buffer
+    // assemble those bytes into uint32_t
+    size_t output_length = sizeof(output_buffer) - outbuf_size;
+    result = pack_mbcs_bytes(output_buffer, output_length);
+
+clean:
+    iconv_close(cd);
+    return result;
+}
+#else
+static uint32_t convert_unicode_to_mb(FT_Encoding encoding, uint32_t codepoint) {
+    // just a stub
+    // we can't handle this cmap, fallback
+    return 0;
+}
+#endif
+
+/**
  * Select a good charmap, prefer Microsoft Unicode charmaps.
  * Otherwise, let FreeType decide.
  */
-void charmap_magic(ASS_Library *library, FT_Face face)
+void ass_charmap_magic(ASS_Library *library, FT_Face face)
 {
     int i;
     int ms_cmap = -1;
@@ -79,7 +231,7 @@ void charmap_magic(ASS_Library *library, FT_Face face)
 
 /**
  * Adjust char index if the charmap is weird
- * (currently just MS Symbol)
+ * (currently all non-Unicode Microsoft cmap)
  */
 
 uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol)
@@ -87,12 +239,22 @@ uint32_t ass_font_index_magic(FT_Face face, uint32_t symbol)
     if (!face->charmap)
         return symbol;
 
-    switch (face->charmap->encoding) {
-    case FT_ENCODING_MS_SYMBOL:
-        return 0xF000 | symbol;
-    default:
-        return symbol;
+    if (face->charmap->platform_id == TT_PLATFORM_MICROSOFT) {
+        switch (face->charmap->encoding) {
+        case FT_ENCODING_MS_SYMBOL:
+            return 0xF000 | symbol;
+        case FT_ENCODING_MS_SJIS:
+        case FT_ENCODING_MS_GB2312:
+        case FT_ENCODING_MS_BIG5:
+        case FT_ENCODING_MS_WANSUNG:
+        case FT_ENCODING_MS_JOHAB:
+            return convert_unicode_to_mb(face->charmap->encoding, symbol);
+        default:
+            return symbol;
+        }
     }
+
+    return symbol;
 }
 
 static void set_font_metrics(FT_Face face)
@@ -274,7 +436,7 @@ static int add_face(ASS_FontSelector *fontsel, ASS_Font *font, uint32_t ch)
     if (!face)
         return -1;
 
-    charmap_magic(font->library, face);
+    ass_charmap_magic(font->library, face);
     set_font_metrics(face);
 
     font->faces[font->n_faces] = face;
@@ -329,19 +491,6 @@ void ass_face_set_size(FT_Face face, double size)
     rq.height = double_to_d6(size);
     rq.horiResolution = rq.vertResolution = 0;
     FT_Request_Size(face, &rq);
-}
-
-/**
- * \brief Set font size
- **/
-void ass_font_set_size(ASS_Font *font, double size)
-{
-    int i;
-    if (font->size != size) {
-        font->size = size;
-        for (i = 0; i < font->n_faces; ++i)
-            ass_face_set_size(font->faces[i], size);
-    }
 }
 
 /**
@@ -417,7 +566,9 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
 
     for (i = 0; i < font->n_faces && index == 0; ++i) {
         face = font->faces[i];
-        index = FT_Get_Char_Index(face, ass_font_index_magic(face, symbol));
+        index = ass_font_index_magic(face, symbol);
+        if (index)
+            index = FT_Get_Char_Index(face, index);
         if (index)
             *face_index = i;
     }
@@ -431,14 +582,19 @@ int ass_font_get_index(ASS_FontSelector *fontsel, ASS_Font *font,
         face_idx = *face_index = add_face(fontsel, font, symbol);
         if (face_idx >= 0) {
             face = font->faces[face_idx];
-            index = FT_Get_Char_Index(face, ass_font_index_magic(face, symbol));
+            index = ass_font_index_magic(face, symbol);
+            if (index)
+                index = FT_Get_Char_Index(face, index);
             if (index == 0 && face->num_charmaps > 0) {
                 int i;
                 ass_msg(font->library, MSGL_WARN,
                     "Glyph 0x%X not found, broken font? Trying all charmaps", symbol);
                 for (i = 0; i < face->num_charmaps; i++) {
                     FT_Set_Charmap(face, face->charmaps[i]);
-                    if ((index = FT_Get_Char_Index(face, ass_font_index_magic(face, symbol))) != 0) break;
+                    index = ass_font_index_magic(face, symbol);
+                    if (index)
+                        index = FT_Get_Char_Index(face, index);
+                    if (index) break;
                 }
             }
             if (index == 0) {
@@ -553,16 +709,16 @@ bool ass_get_glyph_outline(ASS_Outline *outline, int32_t *advance,
     assert(face->glyph->format == FT_GLYPH_FORMAT_OUTLINE);
     FT_Outline *source = &face->glyph->outline;
     if (!source->n_points && !n_lines) {
-        outline_clear(outline);
+        ass_outline_clear(outline);
         return true;
     }
 
     size_t max_points = 2 * source->n_points + 4 * n_lines;
     size_t max_segments = source->n_points + 4 * n_lines;
-    if (!outline_alloc(outline, max_points, max_segments))
+    if (!ass_outline_alloc(outline, max_points, max_segments))
         return false;
 
-    if (!outline_convert(outline, source))
+    if (!ass_outline_convert(outline, source))
         goto fail;
 
     if (flags & DECO_ROTATE) {
@@ -577,7 +733,7 @@ bool ass_get_glyph_outline(ASS_Outline *outline, int32_t *advance,
         if (llabs(dv) > 2 * OUTLINE_MAX)
             goto fail;
         ASS_Vector offs = { dv, -desc };
-        if (!outline_rotate_90(outline, offs))
+        if (!ass_outline_rotate_90(outline, offs))
             goto fail;
     }
 
@@ -586,10 +742,10 @@ bool ass_get_glyph_outline(ASS_Outline *outline, int32_t *advance,
     FT_Orientation dir = FT_Outline_Get_Orientation(source);
     int iy = (dir == FT_ORIENTATION_TRUETYPE ? 0 : 1);
     for (int i = 0; i < n_lines; i++)
-        outline_add_rect(outline, 0, line_y[i][iy], adv, line_y[i][iy ^ 1]);
+        ass_outline_add_rect(outline, 0, line_y[i][iy], adv, line_y[i][iy ^ 1]);
     return true;
 
 fail:
-    outline_free(outline);
+    ass_outline_free(outline);
     return false;
 }

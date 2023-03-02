@@ -32,13 +32,13 @@
 #elif defined(CREATE_HASH_FUNCTIONS)
 #undef CREATE_HASH_FUNCTIONS
 #define START(funcname, structname) \
-    static uint32_t funcname##_hash(void *buf, uint32_t hval) \
+    static ass_hashcode funcname##_hash(void *buf, ass_hashcode hval) \
     { \
         struct structname *p = buf;
 #define GENERIC(type, member) \
-        hval = fnv_32a_buf(&p->member, sizeof(p->member), hval);
+        hval = ass_hash_buf(&p->member, sizeof(p->member), hval);
 #define STRING(member) \
-        hval = fnv_32a_buf(p->member.str, p->member.len, hval);
+        hval = ass_hash_buf(p->member.str, p->member.len, hval);
 #define VECTOR(member) GENERIC(, member.x); GENERIC(, member.y);
 #define END(typedefname) \
         return hval; \
@@ -104,7 +104,8 @@ END(BorderHashKey)
 START(filter, filter_desc)
     GENERIC(int, flags)
     GENERIC(int, be)
-    GENERIC(int, blur)
+    GENERIC(int, blur_x)
+    GENERIC(int, blur_y)
     VECTOR(shadow)
 END(FilterDesc)
 
