@@ -62,7 +62,7 @@ typedef struct {
 
 static inline char *ass_copy_string(ASS_StringView src)
 {
-    char *buf = malloc(src.len + 1);
+    char *buf = (char*) malloc(src.len + 1);
     if (buf) {
         memcpy(buf, src.str, src.len);
         buf[src.len] = '\0';
