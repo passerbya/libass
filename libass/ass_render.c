@@ -2297,7 +2297,7 @@ static void reorder_text(RenderContext *state)
     // Reposition according to the map
     ASS_Vector pen = { 0, 0 };
     int lineno = 1;
-    double max_line_spacing = 0;
+    double max_line_spacing = -DBL_MAX;
     for (int i = 0; i < text_info->length; i++) {
         GlyphInfo *info = text_info->glyphs + cmap[i];
         max_line_spacing = FFMAX(max_line_spacing, info->lineSpacing * state->screen_scale_y);
@@ -2307,7 +2307,7 @@ static void reorder_text(RenderContext *state)
             pen.y += double_to_d6(text_info->lines[lineno].asc);
             pen.y += double_to_d6(render_priv->settings.line_spacing + max_line_spacing);
             lineno++;
-            max_line_spacing = 0;
+            max_line_spacing = -DBL_MAX;
         }
         if (info->skip)
             continue;
