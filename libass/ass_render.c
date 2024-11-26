@@ -1738,6 +1738,27 @@ static void trim_whitespace(RenderContext *state)
     #define FORCEBREAK(glyph, index) (glyph == '\n')
 #endif
 
+int is_chinese_utf16(unsigned uc) {
+    return (uc >= 0x4E00 && uc <= 0x9FFF) ||
+        (uc >= 0x3400 && uc <= 0x4DBF) ||
+        (uc >= 0x20000 && uc <= 0x2A6DF);
+}
+
+int is_japanese_utf16(unsigned uc) {
+    return (uc >= 0x3040 && uc <= 0x309F) ||
+        (uc >= 0x30A0 && uc <= 0x30FF) ||
+        (uc >= 0x4E00 && uc <= 0x9FFF) ||
+        (uc >= 0xFF66 && uc <= 0xFF9D);
+}
+
+int is_thai_utf16(unsigned uc) {
+    return uc >= 0x0E00 && uc <= 0x0E7F;
+}
+
+int is_cjt(unsigned uc) {
+    return is_chinese_utf16(uc) || is_japanese_utf16(uc) || is_thai_utf16(uc);
+}
+
 /*
  * Starts a new line on the first breakable character after overflow
  */
@@ -1773,6 +1794,9 @@ wrap_lines_naive(RenderContext *state, double max_text_width, char *unibrks)
         }
         if (ALLOWBREAK(cur->symbol, i)) {
             last_breakable = i;
+        }
+        if (i > 0 && is_cjt(cur->symbol)) {
+            last_breakable = i - 1;
         }
 
         if (break_at != -1) {
@@ -1847,7 +1871,9 @@ wrap_lines_rebalance(RenderContext *state, double max_text_width, char *unibrks)
                     // (whitespace ' ' will also get trimmed in rendering)
                     GlyphInfo *w = rewind_trailing_spaces(s1, s2);
                     GlyphInfo *e1_old = w;
-                    while ((w > s1) && (!ALLOWBREAK(w->symbol, w - text_info->glyphs))) {
+                    while ((w > s1) && 
+                        (!ALLOWBREAK(w->symbol, w - text_info->glyphs 
+                            || (w != s2 && !is_cjt(w->symbol))))) {
                         --w;
                     }
                     GlyphInfo *e1 = w;
