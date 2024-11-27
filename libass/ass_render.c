@@ -1638,6 +1638,27 @@ static void trim_whitespace(ASS_Renderer *render_priv)
 }
 #undef IS_WHITESPACE
 
+int is_chinese_utf16(unsigned uc) {
+    return (uc >= 0x4E00 && uc <= 0x9FFF) ||
+        (uc >= 0x3400 && uc <= 0x4DBF) ||
+        (uc >= 0x20000 && uc <= 0x2A6DF);
+}
+
+int is_japanese_utf16(unsigned uc) {
+    return (uc >= 0x3040 && uc <= 0x309F) ||
+        (uc >= 0x30A0 && uc <= 0x30FF) ||
+        (uc >= 0x4E00 && uc <= 0x9FFF) ||
+        (uc >= 0xFF66 && uc <= 0xFF9D);
+}
+
+int is_thai_utf16(unsigned uc) {
+    return uc >= 0x0E00 && uc <= 0x0E7F;
+}
+
+int is_cjt(unsigned uc) {
+    return is_chinese_utf16(uc) || is_japanese_utf16(uc) || is_thai_utf16(uc);
+}
+
 /**
  * \brief rearrange text between lines
  * \param max_text_width maximal text line width in pixels
@@ -1678,8 +1699,6 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
             break_at = i;
             ass_msg(render_priv->library, MSGL_DBG2,
                     "forced line break at %d", break_at);
-        } else if (cur->symbol == ' ') {
-            last_space = i;
         } else if (len >= max_text_width
                    && (render_priv->state.wrap_style != 2)) {
             break_type = 1;
@@ -1687,6 +1706,13 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
             if (break_at >= 0)
                 ass_msg(render_priv->library, MSGL_DBG2, "line break at %d",
                         break_at);
+        }
+
+        if (cur->symbol == ' ') {
+            last_space = i;
+        }
+        if (i > 0 && is_cjt(cur->symbol)) {
+            last_space = i - 1;
         }
 
         if (break_at != -1) {
@@ -1727,7 +1753,7 @@ wrap_lines_smart(ASS_Renderer *render_priv, double max_text_width)
                     do {
                         --w;
                     } while ((w > s1) && (w->symbol == ' '));
-                    while ((w > s1) && (w->symbol != ' ')) {
+                    while ((w > s1) && ((w->symbol != ' ') || (w != s2 && !is_cjt(w->symbol)))) {
                         --w;
                     }
                     e1 = w;
